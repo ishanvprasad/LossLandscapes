@@ -30,8 +30,17 @@ def load_pythia_model_only(step, size="70m-seed1"):
     return model
 
 def load_evaluation_data(tokenizer, benchmark="wikitext", batch_size=8, num_samples=256):
-    dataset = load_dataset("allenai/ai2_arc", "ARC-Challenge", split="test")
-    texts = [item["question"] for item in dataset][:num_samples]
+    print(f"Loading benchmark: {benchmark}...")
+    
+    if benchmark == "wikitext":
+        # Load the data Pythia was actually trained on
+        dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+        # Filter out empty lines which are common in wikitext
+        texts = [x["text"] for x in dataset if len(x["text"]) > 10][:num_samples]
+    else:
+        # Fallback to ARC
+        dataset = load_dataset("allenai/ai2_arc", "ARC-Challenge", split="test")
+        texts = [item["question"] for item in dataset][:num_samples]
             
     encoded = tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=128)
     
@@ -58,7 +67,7 @@ def run_full_study():
     if base_tokenizer.pad_token is None:
         base_tokenizer.pad_token = base_tokenizer.eos_token
         
-    global_dataloader = load_evaluation_data(base_tokenizer, num_samples=256)
+    global_dataloader = load_evaluation_data(base_tokenizer, benchmark="wikitext", num_samples=256)
     batch = next(iter(global_dataloader))
     static_inputs = {k: v.to(device) for k, v in batch.items()}
     # ----------------------------------
