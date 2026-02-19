@@ -27,8 +27,8 @@ def load_pythia_checkpoint(step, size="70m-seed1"):
         model_name,
         revision=revision,
         torch_dtype=torch.float32,
-        device_map=None,          # ← no auto sharding
-    )
+        attn_implementation="eager",
+    ).to(device)
     if device is not None:
         model.to(device)
     return model, tokenizer
