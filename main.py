@@ -5,7 +5,7 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader
 
 # Isolate this VRAM-heavy pipeline to specific GPUs on your multi-GPU server
-os.environ["CUDA_VISIBLE_DEVICES"] = "4,5,6,7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3,4,7"
 
 # Import from your modular files
 from utils.curvature import compute_hessian_metrics
@@ -23,36 +23,64 @@ def load_pythia_checkpoint(step, size="70m"):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         
-    model = AutoModelForCausalLM.from_pretrained(model_name, revision=revision).to(device)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name, 
+        device_map="auto",
+        revision=revision,
+        torch_dtype=torch.float16)
     return model, tokenizer
 
 def load_evaluation_data(tokenizer, benchmark="arc_challenge", batch_size=8, num_samples=200):
     """
-    Loads text from evaluation benchmarks to map the loss landscape over real inputs.
-    Supported: "arc_challenge", "hellaswag", "mmlu", "truthfulqa_mc1"
+    Loads text from the exact EleutherAI Pythia zero-shot and few-shot benchmarks.
+    Supported: "arc_challenge", "arc_easy", "blimp", "lambada_openai", "logiqa", 
+               "mmlu", "piqa", "sciq", "wikitext", "winogrande", "wsc"
     """
     print(f"Fetching {num_samples} samples from {benchmark}...")
     
-    # Map benchmark names to their Hugging Face dataset paths
-    if benchmark == "arc_challenge":
-        dataset = load_dataset("allenai/ai2_arc", "ARC-Challenge", split="validation")
-        texts = [item["question"] for item in dataset]
-    elif benchmark == "hellaswag":
-        dataset = load_dataset("Rowan/hellaswag", split="validation")
-        texts = [item["ctx"] for item in dataset]
-    elif benchmark == "mmlu":
-        dataset = load_dataset("cais/mmlu", "all", split="test")
-        texts = [item["question"] for item in dataset]
-    elif benchmark == "truthfulqa_mc1":
-        dataset = load_dataset("truthful_qa", "multiple_choice", split="validation")
-        texts = [item["question"] for item in dataset]
-    else:
+    # Map benchmark names to their Hub paths, configs, and default evaluation splits
+    benchmark_configs = {
+        "arc_challenge": ("allenai/ai2_arc", "ARC-Challenge", "test"),
+        "arc_easy": ("allenai/ai2_arc", "ARC-Easy", "test"),
+        "blimp": ("blimp", "anaphor_agreement", "train"), # One of the many BLiMP linguistic tasks
+        "lambada_openai": ("EleutherAI/lambada_openai", "default", "test"),
+        "logiqa": ("lucasmccabe/logiqa", "default", "test"),
+        "mmlu": ("cais/mmlu", "all", "test"),
+        "piqa": ("piqa", "default", "test"),
+        "sciq": ("sciq", "default", "test"),
+        "wikitext": ("wikitext", "wikitext-2-raw-v1", "test"),
+        "winogrande": ("winogrande", "winogrande_xl", "validation"),
+        "wsc": ("super_glue", "wsc", "validation")
+    }
+    
+    if benchmark not in benchmark_configs:
         raise ValueError(f"Unsupported benchmark: {benchmark}")
         
-    # Subset the data to keep Hessian/Connectivity compute reasonable
-    texts = texts[:num_samples]
+    path, config, split = benchmark_configs[benchmark]
+    dataset = load_dataset(path, config, split=split)
     
-    # Tokenize the batch
+    # Each dataset uses wildly different column names for its core text
+    texts = []
+    for item in dataset:
+        if benchmark in ["arc_challenge", "arc_easy", "mmlu", "sciq"]:
+            texts.append(item["question"])
+        elif benchmark == "blimp":
+            texts.append(item["sentence_good"])
+        elif benchmark == "logiqa":
+            texts.append(item["context"] + " " + item["question"])
+        elif benchmark == "piqa":
+            texts.append(item["goal"])
+        elif benchmark == "winogrande":
+            texts.append(item["sentence"])
+        elif benchmark in ["lambada_openai", "wikitext", "wsc"]:
+            # Wikitext contains empty newlines that we should skip
+            if item["text"].strip(): 
+                texts.append(item["text"])
+                
+        if len(texts) >= num_samples:
+            break
+            
+    # Tokenize the batch (PyHessian needs standardized tensor shapes)
     encoded = tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=128)
     
     class BenchmarkDataset(torch.utils.data.Dataset):
@@ -89,10 +117,11 @@ def run_landscape_evaluation():
     
     # --- A. CURVATURE (Local Structure) ---
     print("\n[1/3] Computing early checkpoint curvature (PyHessian)...")
-    eig_early, trace_early = compute_hessian_metrics(model_early, [static_inputs], device)
+    # pass the raw batch to the helper (we no longer need the list wrapper)
+    eig_early, trace_early = compute_hessian_metrics(model_early, static_inputs, device)
     
     print("[1/3] Computing late checkpoint curvature (PyHessian)...")
-    eig_late, trace_late = compute_hessian_metrics(model_late, [static_inputs], device)
+    eig_late, trace_late = compute_hessian_metrics(model_late, static_inputs, device)
     
     # --- B. SIMILARITY (Phase IV-B check) ---
     print("\n[2/3] Computing CKA Similarity...")
