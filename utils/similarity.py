@@ -16,7 +16,7 @@ def linear_HSIC(X, Y):
 def linear_CKA(X, Y):
     """
     Computes Linear CKA between two activation matrices.
-    X and Y should be shape: (batch_size * sequence_length, hidden_dim)
+    X and Y should be shape: (batch_size, hidden_dim)
     """
     hsic = linear_HSIC(X, Y)
     var1 = torch.sqrt(linear_HSIC(X, X))
@@ -28,14 +28,13 @@ def extract_and_compare(model_1, model_2, inputs, device="cuda"):
     model_2.eval()
     
     with torch.no_grad():
-        # Get hidden states (output_hidden_states=True is required)
         out_1 = model_1(**inputs, output_hidden_states=True)
         out_2 = model_2(**inputs, output_hidden_states=True)
         
-        # Extract the final layer hidden states
-        # Shape: (batch, seq_len, hidden_dim) -> Flatten to (batch*seq_len, hidden_dim)
-        act_1 = out_1.hidden_states[-1].view(-1, out_1.hidden_states[-1].size(-1))
-        act_2 = out_2.hidden_states[-1].view(-1, out_2.hidden_states[-1].size(-1))
+        # FIX 3: MEAN POOL across the sequence length (dim=1)
+        # Shape changes from (batch, seq_len, hidden) -> (batch, hidden)
+        act_1 = out_1.hidden_states[-1].mean(dim=1)
+        act_2 = out_2.hidden_states[-1].mean(dim=1)
         
         cka_score = linear_CKA(act_1, act_2)
         
