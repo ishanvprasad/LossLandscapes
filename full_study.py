@@ -29,7 +29,7 @@ def load_pythia_model_only(step, size="70m-seed1"):
     ).to(device)
     return model
 
-def load_evaluation_data(tokenizer, benchmark="arc_challenge", batch_size=8, num_samples=256):
+def load_evaluation_data(tokenizer, benchmark="wikitext", batch_size=8, num_samples=256):
     dataset = load_dataset("allenai/ai2_arc", "ARC-Challenge", split="test")
     texts = [item["question"] for item in dataset][:num_samples]
             
