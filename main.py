@@ -24,10 +24,13 @@ def load_pythia_checkpoint(step, size="70m-seed1"):
         
     # FIX 4: Loaded in float32 to prevent PyHessian NaN outputs
     model = AutoModelForCausalLM.from_pretrained(
-        model_name, 
-        device_map="auto",
+        model_name,
         revision=revision,
-        torch_dtype=torch.float32)
+        torch_dtype=torch.float32,
+        device_map=None,          # ← no auto sharding
+    )
+    if device is not None:
+        model.to(device)
     return model, tokenizer
 
 def load_evaluation_data(tokenizer, benchmark="arc_challenge", batch_size=8, num_samples=200):
